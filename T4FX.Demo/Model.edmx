@@ -1,0 +1,95 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx Version="3.0" xmlns:edmx="http://schemas.microsoft.com/ado/2009/11/edmx">
+  <!-- EF Runtime content -->
+  <edmx:Runtime>
+    <!-- SSDL content -->
+    <edmx:StorageModels>
+      <Schema xmlns="http://schemas.microsoft.com/ado/2009/11/edm/ssdl" Namespace="StateMachine.Store" Alias="Self" Provider="System.Data.SqlClient" ProviderManifestToken="2005">
+        <EntityContainer Name="StateMachineTargetContainer" >
+        </EntityContainer>
+      </Schema>
+    </edmx:StorageModels>
+    <!-- CSDL content -->
+    <edmx:ConceptualModels>
+      <Schema xmlns="http://schemas.microsoft.com/ado/2009/11/edm" xmlns:cg="http://schemas.microsoft.com/ado/2006/04/codegeneration" xmlns:store="http://schemas.microsoft.com/ado/2007/12/edm/EntityStoreSchemaGenerator" Namespace="StateMachine" Alias="Self" xmlns:annotation="http://schemas.microsoft.com/ado/2009/02/edm/annotation" annotation:UseStrongSpatialTypes="false">
+        <EntityContainer Name="StateMachineContainer" annotation:LazyLoadingEnabled="true">
+          <EntitySet Name="StateMachineDefinitionSet" EntityType="StateMachine.StateMachineDefinition" />
+          <EntitySet Name="States" EntityType="StateMachine.State" />
+          <AssociationSet Name="StateMachineDefinitionState" Association="StateMachine.StateMachineDefinitionState">
+            <End Role="StateMachineDefinition" EntitySet="StateMachineDefinitionSet" />
+            <End Role="State" EntitySet="States" />
+          </AssociationSet>
+          <EntitySet Name="Transitions" EntityType="StateMachine.Transition" />
+          <AssociationSet Name="StateTransition" Association="StateMachine.StateTransition">
+            <End Role="State" EntitySet="States" />
+            <End Role="Transition" EntitySet="Transitions" />
+          </AssociationSet>
+        </EntityContainer>
+        <EntityType Name="StateMachineDefinition">
+          <Key>
+            <PropertyRef Name="Name" />
+          </Key>
+          <NavigationProperty Name="States" Relationship="StateMachine.StateMachineDefinitionState" FromRole="StateMachineDefinition" ToRole="State" />
+          <Property Type="String" Name="Name" Nullable="false" />
+          <Property Type="String" Name="Description" Nullable="false" />
+        </EntityType>
+        <EntityType Name="State" >
+          <Key>
+            <PropertyRef Name="Name" />
+          </Key>
+          <NavigationProperty Name="StateMachineDefinition" Relationship="StateMachine.StateMachineDefinitionState" FromRole="State" ToRole="StateMachineDefinition" />
+          <NavigationProperty Name="Transitions" Relationship="StateMachine.StateTransition" FromRole="State" ToRole="Transition" />
+          <Property Type="String" Name="Name" Nullable="false" />
+          <Property Type="String" Name="Description" Nullable="false" />
+          <Property Type="String" Name="MapPosition" Nullable="false" />
+        </EntityType>
+        <Association Name="StateMachineDefinitionState">
+          <End Type="StateMachine.StateMachineDefinition" Role="StateMachineDefinition" Multiplicity="1" />
+          <End Type="StateMachine.State" Role="State" Multiplicity="*" />
+        </Association>
+        <EntityType Name="Transition" >
+          <Key>
+            <PropertyRef Name="Name" />
+          </Key>
+          <NavigationProperty Name="SourceState" Relationship="StateMachine.StateTransition" FromRole="Transition" ToRole="State" />
+          <Property Type="String" Name="Name" Nullable="false" />
+          <Property Type="String" Name="TargetStateName" Nullable="false" />
+          <Property Type="Boolean" Name="IsDefault" Nullable="false" annotation:StoreGeneratedPattern="None" />
+          <Property Type="String" Name="Description" Nullable="false" />
+          <Property Type="String" Name="MapWaypointPositions" Nullable="false" />
+        </EntityType>
+        <Association Name="StateTransition">
+          <End Type="StateMachine.State" Role="State" Multiplicity="1" />
+          <End Type="StateMachine.Transition" Role="Transition" Multiplicity="*" />
+        </Association>
+      </Schema>
+    </edmx:ConceptualModels>
+    <!-- C-S mapping content -->
+    <edmx:Mappings>
+      <Mapping xmlns="http://schemas.microsoft.com/ado/2009/11/mapping/cs" Space="C-S">
+        <Alias Key="Model" Value="StateMachine" />
+        <Alias Key="Target" Value="StateMachine.Store" />
+        <EntityContainerMapping CdmEntityContainer="StateMachineContainer" StorageEntityContainer="StateMachineTargetContainer">
+        </EntityContainerMapping>
+      </Mapping>
+    </edmx:Mappings>
+  </edmx:Runtime>
+  <!-- EF Designer content (DO NOT EDIT MANUALLY BELOW HERE) -->
+  <edmx:Designer xmlns="http://schemas.microsoft.com/ado/2009/11/edmx">
+    <edmx:Connection>
+      <DesignerInfoPropertySet>
+        <DesignerProperty Name="MetadataArtifactProcessing" Value="EmbedInOutputAssembly" />
+      </DesignerInfoPropertySet>
+    </edmx:Connection>
+    <edmx:Options>
+      <DesignerInfoPropertySet>
+        <DesignerProperty Name="ValidateOnBuild" Value="true" />
+        <DesignerProperty Name="EnablePluralization" Value="False" />
+        <DesignerProperty Name="CodeGenerationStrategy" Value="None" />
+      </DesignerInfoPropertySet>
+    </edmx:Options>
+    <!-- Diagram content (shape and connector positions) -->
+    <edmx:Diagrams>
+    </edmx:Diagrams>
+  </edmx:Designer>
+</edmx:Edmx>

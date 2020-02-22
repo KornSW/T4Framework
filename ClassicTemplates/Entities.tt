@@ -1,0 +1,489 @@
+﻿<#
+'  +----------------------------------------------------------------------------+
+'  ¦ This file is an open-source template which is using some code from a       ¦
+'  ¦ T4 Template deliverd with Microsoft EntityFramework 4-6 (licensed under    ¦
+'  ¦ the Microsoft Public License) in a modified version to generate            ¦
+'  ¦ "CodeFirst"-compatible POCO's from a EDMX-Model.                           ¦
+'  +----------------------------------------------------------------------------+
+'  ¦ > the modification was made by:  T.Korn  /  last change: 03.08.2017        ¦
+'  ¦ > the newest version of this file can be found here:                       ¦
+'  ¦   https://github.com/KornSW/T4Framework (under 'ClassicTemplates')         ¦
+'  ¦ > the removal of this notice is prohibited!                                ¦
+'  +----------------------------------------------------------------------------+
+'  ¦ THIS CODE IS PROVIDED *AS IS* WITHOUT WARRANTY OF ANY KIND, EITHER         ¦
+'  ¦ EXPRESS OR IMPLIED, INCLUDING ANY IMPLIED WARRANTIES OF FITNESS FOR A      ¦
+'  ¦ PARTICULAR PURPOSE, MERCHANTABILITY, OR NON-INFRINGEMENT.                  ¦
+'  +----------------------------------------------------------------------------+
+#>
+<#@ template language="VB" debug="false" hostspecific="true"#>
+<#@ include file="EF.Utility.VB.ttinclude"#><#@
+ output extension=".Generated.vb"#><#
+
+Dim code As New CodeGenerationTools(Me)
+Dim loader As New MetadataLoader(Me)
+Dim region As New CodeRegion(Me, 1)
+Dim ef As New MetadataTools(Me)
+
+Dim inputFile As String = "Model.edmx"
+
+Dim ItemCollection As EdmItemCollection = loader.CreateEdmItemCollection(inputFile)
+Dim namespaceName As String = code.VsNamespaceSuggestion()
+
+Dim associations As IEnumerable(Of AssociationType) = ItemCollection.OfType(Of AssociationType)()
+Dim fkIdProperties As New List(Of String)
+Dim fkNameRegister As New Dictionary(Of String, String())
+For Each a As AssociationType In associations
+  Dim names As New List(Of String)
+    If(a.ReferentialConstraints.Count > 0)        
+        For Each p As EdmProperty In a.ReferentialConstraints.Item(0).ToProperties
+            names.Add(p.name)
+            fkIdProperties.Add(code.Escape(p.DeclaringType) & "." & p.name) 
+        Next
+    End If
+   fkNameRegister.Add(code.Escape(a.FullName), names.ToArray())
+Next
+
+Dim fileManager As EntityFrameworkTemplateFileManager = EntityFrameworkTemplateFileManager.Create(Me)
+WriteHeader(fileManager)
+
+'PRE EVALUATION OF ALL ASSOCIATIONS, TO DECIDE, IF FK-FIELDS ARE MAPPABLE TO REAL PROPERTIES 
+Dim fkPropertySupportable As New Dictionary(Of EdmProperty, Boolean)
+For Each loopEntity As EntityType In ItemCollection.GetItems(Of EntityType)().OrderBy(Function(e) e.Name)
+    Dim entity as EntityType = loopEntity
+    Dim localEntityShortCut As String = BuildShortCut(code.Escape(entity))
+  Dim navigationProperties as IEnumerable(Of NavigationProperty) = entity.NavigationProperties.Where(Function(np) np.DeclaringType Is entity)
+    If (navigationProperties.Any()) Then
+        For Each localNavigationProperty As NavigationProperty In navigationProperties
+          Dim localEnd = localNavigationProperty.FromEndMember
+          Dim remoteEnd = localNavigationProperty.ToEndMember
+          Dim remoteEntity As EntityType = remoteEnd.GetEntityType()
+          Dim association = DirectCast(localNavigationProperty.RelationshipType, AssociationType)
+      'the mapping definition has a syntactical problem when specifiing foreigen key fields for (0/1)-(1) relations!
+      'the fluent command 'HasForeignKey'cannot be used, so we need to use 'MapKey'
+      Dim mappingVia_HasForeignKey_NotSupported = (association.ReferentialConstraints.Count > 1) OrElse (Not ((localEnd.RelationshipMultiplicity = RelationshipMultiplicity.Many) Or (remoteEnd.RelationshipMultiplicity = RelationshipMultiplicity.Many)))
+      If(association.ReferentialConstraints.Count > 0)Then
+        'in most cases the FK fields are not mappable to real Properties
+      'so, by default, were removing them form the property list
+      'to skip the code generation for them...
+        For Each p As EdmProperty In association.ReferentialConstraints.Item(0).ToProperties	
+        If (Not fkPropertySupportable.ContainsKey(p)) Then
+          fkPropertySupportable.Add(p, False)
+        End If
+      Next
+        If(association.ReferentialConstraints.Item(0).ToProperties.Count = 1)Then
+        fkPropertySupportable(association.ReferentialConstraints.Item(0).ToProperties().Item(0)) = Not mappingVia_HasForeignKey_NotSupported
+      End If		 
+      End If
+        Next
+    End If
+Next
+
+For Each loopEntity As EntityType In ItemCollection.GetItems(Of EntityType)().OrderBy(Function(e) e.Name)
+    Dim entity as EntityType = loopEntity
+  Dim primitiveProperties as IEnumerable(Of EdmProperty) = entity.Properties.Where(Function(p) TypeOf p.TypeUsage.EdmType Is PrimitiveType AndAlso p.DeclaringType Is entity)
+  Dim keySetInfo As String = ""
+  Dim keySetDebuggerString As String = ""
+
+  If (entity.Name.StartsWith("EXTERNAL_")=False) Then
+
+  'KEYSETS SAMMELN
+  Dim keySets As New Dictionary(Of String, List(Of EdmProperty))
+    If primitiveProperties.Any() Then
+        For Each edmProperty As EdmProperty In primitiveProperties
+          Dim propString As String = code.Escape(entity)  & "." & code.Escape(edmProperty)
+          If(Not FkIdProperties.Contains(propString))Then
+      If (edmProperty.Documentation IsNot Nothing AndAlso Not String.IsNullOrEmpty(edmProperty.Documentation.LongDescription))
+        For Each keySetName As String In edmProperty.Documentation.LongDescription.Split(";"c)
+          keySetName = keySetName.Trim()
+          If(Not keySets.ContainsKey(keySetName))
+            keySets.Add(keySetName, new List(Of EdmProperty))
+          End If
+          keySets(keySetName).Add(edmProperty)
+        Next
+      End If
+      End If
+    Next
+    End If
+
+  For Each keySetName As String In keySets.Keys
+    Dim keySetPropertyList As List(Of EdmProperty) = keySets(keySetName)
+    Dim first as Boolean = True		
+    keySetDebuggerString += " ("
+    keySetInfo += "unique("
+    For Each keyProperty As EdmProperty In keySetPropertyList
+      If(first)Then
+        first = False
+      Else
+        keySetInfo += "+"
+        keySetDebuggerString += "/"
+      End If
+      keySetInfo = keySetInfo & "'" & code.Escape(keyProperty) & "'"
+      keySetDebuggerString = keySetDebuggerString + "{" + code.Escape(keyProperty) + "}"
+    Next
+    keySetInfo += ") "
+    keySetDebuggerString += ")"
+  Next
+
+    CheckName(entity.Name)
+
+    fileManager.StartNewFile(entity.Name & ".Generated.vb")
+#>
+<#
+    BeginNamespace(namespaceName, code)
+
+        If (entity.Documentation IsNot Nothing AndAlso Not String.IsNullOrEmpty(entity.Documentation.Summary))
+#>''' <summary> <#= entity.Documentation.Summary.Replace(Environment.NewLine ,Environment.NewLine & "''' ") #> | <#=keySetInfo #></summary>  
+<#
+    ElseIf (Not keySetInfo = "") Then
+#>''' <summary> <#=keySetInfo #></summary>  
+<#
+        End If
+
+        Dim DebuggerDisplayString As String = entity.Name & keySetDebuggerString
+        If (entity.Documentation IsNot Nothing AndAlso Not String.IsNullOrEmpty(entity.Documentation.LongDescription))
+            DebuggerDisplayString = string.Format("{0} ({1})", DebuggerDisplayString, entity.Documentation.LongDescription)
+            DebuggerDisplayString = entity.Documentation.LongDescription
+        End If
+
+#><DebuggerDisplay("<#= DebuggerDisplayString #>")>
+<#
+Dim inheritedEntity = code.Escape(entity.BaseType)
+If(inheritedEntity isnot nothing AndAlso inheritedEntity.StartsWith("EXTERNAL_"))Then
+  inheritedEntity = inheritedEntity.Replace("EXTERNAL_","")
+End If
+#>
+Partial <#=Accessibility.ForType(entity)#> <#=code.SpaceAfter(code.MustInheritOption(entity))#>Class <#=code.Escape(entity)#><#=code.StringBefore(Environment.NewLine & CodeRegion.GetIndent(region.CurrentIndentLevel + 2) & " Inherits ", inheritedEntity)#>
+<#
+    If primitiveProperties.Any() Then
+        For Each edmProperty As EdmProperty In primitiveProperties
+
+          Dim propString As String = code.Escape(entity)  & "." & code.Escape(edmProperty)
+      Dim skipPropertyGeneration As Boolean = False
+    If(fkPropertySupportable.ContainsKey(edmProperty))Then
+      skipPropertyGeneration = Not fkPropertySupportable(edmProperty)
+    End If
+
+        If(Not skipPropertyGeneration)Then
+#>
+
+<#	   
+            If (edmProperty.Documentation IsNot Nothing AndAlso Not String.IsNullOrEmpty(edmProperty.Documentation.Summary))
+#>  ''' <summary> <#= edmProperty.Documentation.Summary.Replace(Environment.NewLine ,Environment.NewLine & "  ''' ") #> </summary>  
+<#
+            ElseIf (edmProperty.Name.EndsWith("Id"))
+#>  <EditorBrowsable(EditorBrowsableState.Advanced)>  
+<#
+            ElseIf (edmProperty.Name.EndsWith("Uid"))
+#>  <EditorBrowsable(EditorBrowsableState.Advanced)>  
+<#
+            End If
+
+            If (edmProperty.Name.EndsWith("EnumId"))
+              WriteProperty(code, edmProperty)
+            Else
+              WriteProperty(code, edmProperty)
+            End If
+
+    End If   
+
+      Next
+    End If
+
+    Dim complexProperties as IEnumerable(Of EdmProperty) = entity.Properties.Where(Function(p) TypeOf p.TypeUsage.EdmType Is ComplexType AndAlso p.DeclaringType Is entity)
+    If complexProperties.Any() Then
+
+       For Each complexProperty As EdmProperty In complexProperties
+#>
+
+<#
+        If (complexProperty.Documentation IsNot Nothing AndAlso Not String.IsNullOrEmpty(complexProperty.Documentation.Summary))
+#>  ''' <summary> <#= complexProperty.Documentation.Summary.Replace(Environment.NewLine ,Environment.NewLine & "  ''' ") #> </summary>  
+<#
+        End If
+            WriteComplexProperty(code, complexProperty)
+       Next
+    End If
+
+    Dim navigationProperties as IEnumerable(Of NavigationProperty) = entity.NavigationProperties.Where(Function(np) np.DeclaringType Is entity)
+    If navigationProperties.Any() Then
+
+        For Each navigationProperty As NavigationProperty In navigationProperties
+#>
+
+<#
+            If (navigationProperty.Documentation IsNot Nothing AndAlso Not String.IsNullOrEmpty(navigationProperty.Documentation.Summary))
+#>  ''' <summary> <#= navigationProperty.Documentation.Summary.Replace(Environment.NewLine ,Environment.NewLine & "  ''' ") #> </summary>  
+<#
+            ElseIf(navigationProperty.ToEndMember.GetEntityType().Documentation IsNot Nothing AndAlso Not String.IsNullOrEmpty(navigationProperty.ToEndMember.GetEntityType().Documentation.Summary))
+#>  ''' <summary> <#=code.Escape(navigationProperty.ToEndMember.GetEntityType())#>: <#= navigationProperty.ToEndMember.GetEntityType().Documentation.Summary.Replace(Environment.NewLine ,Environment.NewLine & "  ''' ") #> </summary>  
+<#        
+            End If
+            WriteNavigationProperty(code, navigationProperty)
+        Next
+    End If
+
+#>
+
+End Class
+<#
+    EndNamespace(namespaceName)
+  End If
+Next
+
+For Each loopComplex As ComplexType In ItemCollection.GetItems(Of ComplexType)().OrderBy(Function(e) e.Name)
+    Dim complex as ComplexType = loopComplex
+    fileManager.StartNewFile(complex.Name & ".vb")
+#>
+
+<#
+    BeginNamespace(namespaceName, code)
+#>
+Partial <#=Accessibility.ForType(complex)#> Class <#=code.Escape(complex)#>
+<#
+
+    Dim primitiveProperties as IEnumerable(Of EdmProperty) = complex.Properties.Where(Function(p) TypeOf p.TypeUsage.EdmType Is PrimitiveType AndAlso p.DeclaringType Is complex)
+    If primitiveProperties.Any() Then
+        For Each edmProperty As EdmProperty In primitiveProperties
+            WriteProperty(code, edmProperty)
+        Next
+    End If
+
+    Dim complexProperties as IEnumerable(Of EdmProperty) = complex.Properties.Where(Function(p) TypeOf p.TypeUsage.EdmType Is ComplexType AndAlso p.DeclaringType Is complex)
+    If complexProperties.Any() Then
+#>
+
+<#
+        For Each complexProperty As EdmProperty In complexProperties
+            WriteComplexProperty(code, complexProperty)
+        Next
+    End If
+
+#>
+
+End Class
+<#
+    EndNamespace(namespaceName)
+Next
+
+If Not VerifyTypesAreCaseInsensitiveUnique(ItemCollection) Then
+    Return ""
+End If
+
+fileManager.Process()
+#>
+<#+
+
+Private Sub WriteHeader(ByVal fileManager As EntityFrameworkTemplateFileManager)
+    fileManager.StartHeader()
+#>
+'==============================================================================
+' Auto-generated code
+'==============================================================================
+' This code was generated from the Entities.tt template.
+' 
+' Manual changes to this file may cause unexpected behavior in your application.
+' Manual changes to this file will be overwritten if the code is regenerated.
+'==============================================================================
+
+Imports System
+Imports System.Collections.Generic
+Imports System.Collections.ObjectModel
+Imports System.ComponentModel
+Imports System.Diagnostics
+
+<#+
+    FileManager.EndBlock()
+End Sub
+
+Private Sub BeginNamespace(ByVal namespaceName As String, ByVal code As CodeGenerationTools)
+    Dim region As CodeRegion = New CodeRegion(Me)
+    If Not String.IsNullOrEmpty(namespaceName) Then
+#>
+Namespace <#=code.EscapeNamespace(namespaceName)#>
+
+<#+
+        PushIndent(CodeRegion.GetIndent(1))
+    End If
+End Sub
+
+Private Sub EndNamespace(namespaceName As String)
+    If Not String.IsNullOrEmpty(namespaceName) Then
+        PopIndent()
+#>
+
+End Namespace
+<#+
+    End If
+End Sub
+
+
+Private Sub WriteProperty(code As CodeGenerationTools, edmProperty As EdmProperty)	
+    Dim prop = DirectCast(edmProperty.TypeUsage.EdmType, PrimitiveType)
+    Dim def As String = edmProperty.DefaultValue
+
+    If prop.PrimitiveTypeKind = PrimitiveTypeKind.DateTime Then
+
+      If Not String.IsNullOrEmpty(def) Then
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", code.CreateLiteral(edmProperty.DefaultValue))) 
+      ElseIf edmProperty.Nullable Then
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", Nothing)) 
+      Else
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", "#01/01/1900#")) 
+      End If
+
+    ElseIf prop.PrimitiveTypeKind = PrimitiveTypeKind.String Then
+
+      If Not String.IsNullOrEmpty(def) Then
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", code.CreateLiteral(edmProperty.DefaultValue))) 
+      ElseIf edmProperty.Nullable Then
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", Nothing)) 
+      Else
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", "String.Empty")) 
+      End If
+
+    ElseIf prop.PrimitiveTypeKind = PrimitiveTypeKind.Guid Then
+
+      If Not String.IsNullOrEmpty(def) Then
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", code.CreateLiteral(edmProperty.DefaultValue))) 
+      ElseIf edmProperty.Nullable Then
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", Nothing)) 
+      ElseIf code.Escape(edmProperty.Name).ToLower()="uid" Then
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", "Guid.NewGuid()")) 
+      Else
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", "Guid.Empty")) 
+      End If
+
+    ElseIf prop.PrimitiveTypeKind = PrimitiveTypeKind.Binary Then
+
+      If Not String.IsNullOrEmpty(def) Then
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", code.CreateLiteral(edmProperty.DefaultValue))) 
+      ElseIf edmProperty.Nullable Then
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", Nothing)) 
+      Else
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", "{}")) 
+      End If
+
+    Else
+        WriteProperty(code, edmProperty, code.StringBefore(" = ", code.CreateLiteral(edmProperty.DefaultValue)))
+    End If
+
+End Sub
+
+Private Sub WriteComplexProperty(code As CodeGenerationTools, complexProperty As EdmProperty)
+    WriteProperty(code, complexProperty, " = New " & code.Escape(complexProperty.TypeUsage))
+End Sub
+
+Private Sub WriteProperty(code As CodeGenerationTools, edmProperty As EdmProperty, defaultValue As String)
+    WriteProperty(Accessibility.ForProperty(edmProperty), _
+                  code.Escape(edmProperty.TypeUsage), _
+                  code.Escape(edmProperty), _
+                  code.SpaceAfter(Accessibility.ForGetter(edmProperty)), _
+                  code.SpaceAfter(Accessibility.ForSetter(edmProperty)), _
+                  defaultValue)
+End Sub
+
+Private Sub WriteNavigationProperty(code As CodeGenerationTools, navigationProperty As NavigationProperty)
+    Dim endType = code.Escape(navigationProperty.ToEndMember.GetEntityType())
+    Dim defaultValue = ""
+    Dim propertyType = code.Escape(endType).Replace("EXTERNAL_","")
+    
+    If(navigationProperty.ToEndMember.RelationshipMultiplicity = RelationshipMultiplicity.Many)
+        defaultValue = " = New ObservableCollection(Of " & propertyType & ")"
+        propertyType = "ObservableCollection(Of " & propertyType & ")"
+    End If
+
+    CheckName(code.Escape(navigationProperty))
+
+    WriteProperty(PropertyAccessibilityAndVirtual(navigationProperty), _
+                  propertyType, _
+                  code.Escape(navigationProperty), _
+                  code.SpaceAfter(Accessibility.ForGetter(navigationProperty)), _
+                  code.SpaceAfter(Accessibility.ForSetter(navigationProperty)), _
+                  defaultValue)
+End Sub
+
+Private Sub WriteProperty(accessibility As String, type As String, name As String, getterAccessibility As String, setterAccessibility As String, defaultValue As String)
+   CheckName(name)
+   If ([String].IsNullOrEmpty(getterAccessibility) AndAlso [String].IsNullOrEmpty(setterAccessibility))
+#>
+  <#=accessibility#> Property <#=name#> As <#=type#><#=defaultValue#>
+<#+
+    Else
+#>
+
+  Private _<#=name#> As <#=type#><#=defaultValue#>
+  <#=accessibility#> Property <#=name#> As <#=type#>
+    <#=getterAccessibility#>Get
+      Return _<#=name#>
+    End Get
+    <#=setterAccessibility#>Set(ByVal value As <#=type#>)
+      _<#=name#> = value
+    End Set
+  End Property
+<#+
+    End If
+End Sub
+
+Private Function PropertyAccessibilityAndVirtual(ByVal member As EdmMember) As String
+    Dim propertyAccess As String = Accessibility.ForProperty(member)
+    Dim setAccess as String = Accessibility.ForSetter(member)
+    Dim getAccess as String = Accessibility.ForGetter(member)
+    If propertyAccess <> "Private" AndAlso setAccess <> "Private" AndAlso getAccess <> "Private" Then
+        Return propertyAccess & " Overridable"
+    End If
+
+    Return propertyAccess
+End Function
+
+Private Function VerifyTypesAreCaseInsensitiveUnique(ByVal itemCollection As EdmItemCollection) As Boolean
+    Dim alreadySeen As New Dictionary(Of String, Boolean)(StringComparer.OrdinalIgnoreCase)
+
+    For Each type As StructuralType In itemCollection.GetItems(Of StructuralType)()
+        If Not (TypeOf type Is EntityType OrElse TypeOf type Is ComplexType) Then
+            Continue For
+        End If
+
+        If alreadySeen.ContainsKey(type.FullName) Then
+            [Error](String.Format("This template does not support types that differ only by case, the types {0} are not supported", type.FullName))
+            Return False
+        Else
+            alreadySeen.Add(type.FullName, True)
+        End If
+    Next
+
+    Return True
+End Function
+
+Private Sub CheckName(name As String)
+    name = name.ToLower()
+    If (name.Contains("ä")) Then
+        Throw New ArgumentException(String.Format("Der Name '{0}' enthält ein 'ä' und ist somit ungültig!", name))
+    End If
+    If (name.Contains("ö")) Then
+        Throw New ArgumentException(String.Format("Der Name '{0}' enthält ein 'ö' und ist somit ungültig!", name))
+    End If
+    If (name.Contains("ü")) Then
+        Throw New ArgumentException(String.Format("Der Name '{0}' enthält ein 'ü' und ist somit ungültig!", name))
+    End If
+    If (name.Contains("ß")) Then
+        Throw New ArgumentException(String.Format("Der Name '{0}' enthält ein 'ß' und ist somit ungültig!", name))
+    End If
+End sub
+
+  Private Function BuildShortCut(name As String) As String
+    Dim shortCut As String = String.Empty
+
+    For i As Integer = 0 To (name.length - 1)
+      If(Char.IsUpper(name(i)))Then
+        shortCut += name(i).ToString()
+      End If
+    Next
+
+    If (shortCut = String.Empty) Then
+      shortCut = name(0).ToString()
+    End If
+
+    Return shortCut.ToLower()
+  End Function
+
+#>

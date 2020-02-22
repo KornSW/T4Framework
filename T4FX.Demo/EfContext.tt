@@ -1,0 +1,47 @@
+﻿<#@ template language="VB" debug="false" hostspecific="true" #>
+<#@ assembly name="KSW.T4FX.dll" #>
+<#@ assembly name="KSW.T4FX.DbModelGeneration.dll" #>
+<#@ assembly name="KSW.T4FX.DbModelGeneration.EFSupport.dll" #>
+<#@ import namespace="System" #>
+<#@ import namespace="System.IO" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="KSW.T4FX" #>
+<#@ import namespace="KSW.T4FX.DbModelGeneration" #>
+<#@ import namespace="KSW.T4FX.DbModelGeneration.EFSupport" #>
+<#@ output extension=".log" #>
+<#
+
+'
+' 
+' This templates requires KornSW T4 Generator Framework
+' all references assemblies with schema KSW.*.dll needs to placed in you visual studio application directory
+' (usually C:\Program Files (x86)\Microsoft Visual Studio 14.0\Common7\IDE\)
+' to be loaded correctly
+' if tey are not existing, please build them using the sources them from http://github.com/KornSW/T4Framework
+'
+'
+
+Using gen As New GeneratorContext(Host, generationEnvironment)
+
+  Dim genHost = context.Host
+  Dim generationEnvironment = context.GenerationEnvironment
+
+  '###########################################################
+
+  Dim inputFile = ".\Model.xml"
+
+  '###########################################################
+  Dim definition = DbModelXmlSerializer.DeserializeFromFile(inputFile)
+
+  genHost.DeleteOldOutputs()
+
+
+  Dim dbContextGenerator As New EfDbContextGenerator(definition, context)
+  dbContextGenerator.Generate()
+
+  Dim mappingGenerator As New EfMappingGenerator(definition, context)
+  mappingGenerator.Generate()
+
+End Using
+
+#>

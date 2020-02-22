@@ -1,0 +1,829 @@
+<#@ template language="vb" hostspecific="True" #>
+<#@ assembly name="System.Xml" #>
+<#@ assembly name="System.Xml.Linq" #>
+<#@ assembly name="System.Core" #>
+<#@ assembly name="EnvDTE" #>
+<#@ assembly name="Microsoft.VisualStudio.OLE.Interop" #>
+<#@ assembly name="Microsoft.VisualStudio.Shell" #>
+<#@ assembly name="Microsoft.VisualStudio.Shell.Interop" #>
+<#@ assembly name="Microsoft.VisualStudio.Shell.Interop.8.0" #>
+<#@ assembly name="System.Data" #>
+<#@ assembly name="System.Data.SqlServerCe" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ import namespace="System.Diagnostics" #>
+<#@ import namespace="System.IO" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Xml" #>
+<#@ import namespace="Microsoft.VisualStudio.Shell" #>
+<#@ import namespace="Microsoft.VisualStudio.Shell.Interop" #>
+<#@ import namespace="Microsoft.VisualStudio.TextTemplating" #>
+<#@ import namespace="System.Data" #>
+<#@ import namespace="System.Data.SqlClient" #>
+<#@ import namespace="System.Data.SqlServerCe" #>
+<#@ import namespace="System.Xml.Linq" #>
+<#@ import namespace="System.Core" #>
+<#@ output extension=".log" #>
+<#
+	'***********************************************************************************************************************
+	'   Version: 2013-12-09
+	'***********************************************************************************************************************
+	
+		Const ProjectName As String        = "TID" '(used for the names of the reference databases)
+
+		Const InputScript As String        = "..\DataContext.edmx.sql"
+
+		Const AdditionalScript As String   = "..\DataContext.manual.sql"
+
+		Const SqlServerName As String      = "(localdb)\v11.0"
+
+		Const DbCompareTool As String      = "C:\TFS\TAS-WIE-Basis\1.3\Tools\Dev\bin\TW.BCGer.Tools.YapDB.exe"
+
+	'***********************************************************************************************************************
+		
+	'SOURCE FILE SPLITTING
+	Const InputScriptBeginLine As String   = "-- Dropping existing FOREIGN KEY constraints"
+	Const InputScriptSplitLine As String   = "-- Creating all tables"
+	
+	'TEMPORARY HELPER DATABASES
+	Const MasterDb As String               = ProjectName & "_SqlGeneration_MasterDb"
+	Const ReferenceDb As String            = ProjectName & "_SqlGeneration_ReferenceDb"
+	Const SqlConnectionstring As String    = "Data Source=%SERVER%;Initial Catalog=%DB%;Integrated Security=SSPI"	
+
+	'TEMPORARY HELPER FILES
+	Const DbCompareOutput As String        = ProjectName & "_SqlGeneration_Differences.sql"	 
+	Const FileNameSqlPrepare As String     = "SqlSetup.preparation"
+	Const FileNameFullInstall As String    = "SqlSetup.extrapolation"
+
+	'TARGET FILE PATTERNS
+	Const FileNameDeleteAll As String      = "000_DeleteDb.sql"
+	Const FirstFileNamePattern As String   = "{0:000}_InstallDb.sql"
+	Const FileNamePattern As String        = "{0:000}_UpdateDb.sql"
+	Const StartIndex As Integer            = 1
+		
+	'TARGET FILE SPLITTING
+	Const CommentSyntax As String          = "--"
+	Const SeparatorLine As String          = "############################################################"
+
+	'------------------------------------------------------------------------
+	
+	Dim currentGenerationTime As DateTime = DateTime.Now
+	Dim previousGenerationTime As DateTime = DateTime.MinValue
+
+	Dim splitLine As String = String.Format("{0} {1}", CommentSyntax, SeparatorLine)
+	Dim timeStamp As String = String.Format("{0} - {1}",currentGenerationTime.ToShortDateString, currentGenerationTime.ToLongTimeString)
+	Dim initial As Boolean = true
+
+	Dim generationLog As New System.Text.StringBuilder()
+	Dim fullInstallScript As New System.Text.StringBuilder()	
+	Dim deleteAllScript As New System.Text.StringBuilder()
+	Dim inputScriptSetupPart As New System.Text.StringBuilder()
+	Dim inputScriptVersionDate As DateTime
+
+	Dim filePathFullInstall As String
+	Dim filePathDeleteAll As String
+	Dim filePathInputScript As String
+	Dim filePathAdditionalScript As String
+	Dim filePathDbCompareTool As String
+	Dim filePathDbCompareOutput As String
+	Dim filePathMasterDb As String
+	Dim filePathReferenceDb As String
+	Dim filePathSqlPrepare As String
+	Dim filePathGenOutputLog As String
+
+	Try
+
+	'------------------------------------------------------------------------
+	' preparation (resolve filesystem paths)
+	'------------------------------------------------------------------------
+
+	Dim workingFolder As String
+	workingFolder = IO.Path.GetDirectoryName(Me.Host.TemplateFile)
+	If(Not workingFolder.EndsWith("\"))Then
+		workingFolder = workingFolder & "\"
+	End If
+
+	filePathFullInstall      = workingFolder & FileNameFullInstall 
+	filePathDeleteAll        = workingFolder & FileNameDeleteAll 
+	filePathInputScript      = workingFolder & InputScript
+	filePathAdditionalScript = workingFolder & AdditionalScript
+	filePathDbCompareTool    = DbCompareTool
+    filePathDbCompareOutput  = workingFolder & DbCompareOutput
+	filePathSqlPrepare       = workingFolder & FileNameSqlPrepare
+	filePathGenOutputLog     = workingFolder & IO.Path.GetFileNameWithoutExtension(Me.Host.TemplateFile) & ".log"
+
+	generationLog.Append("This Template Execution Time: ")
+	generationLog.AppendLine(timeStamp)
+
+	If(Not IO.File.Exists(DbCompareTool))Then
+		Throw new Exception(string.Format("{0}{0}THE DB-UPDATE-TOOL WAS NOT FOUND!{0}{0}PLEASE MAKE SURE, THAT YOU HAVE RETRIEVED '{1}' FROM TFS!  {0}{0}",Environment.NewLine,DbCompareTool))
+	End If
+
+	'------------------------------------------------------------------------
+	' read the old full install script
+	'------------------------------------------------------------------------
+
+	initial = (Not IO.File.Exists(filePathFullInstall))
+
+	If (initial) Then
+		generationLog.AppendLine("Initial Run: True")
+	Else
+		generationLog.AppendLine("Initial Run: False")
+	End If
+
+	'------------------------------------------------------------------------
+	' load source script and split it into delete / setup
+	'------------------------------------------------------------------------
+
+	generationLog.Append("Input Script: ")
+	generationLog.AppendLine(filePathInputScript)
+
+	inputScriptVersionDate = Me.SplitInputScript(filePathInputScript, filePathAdditionalScript, InputScriptSplitLine, InputScriptBeginLine, inputScriptSetupPart, deleteAllScript)
+	
+	'------------------------------------------------------------------------
+	' check versions
+	'------------------------------------------------------------------------
+
+	If (Not initial AndAlso IO.File.Exists(filePathGenOutputLog)) Then
+		previousGenerationTime = Me.ReadPreviousGenerationTime(filePathGenOutputLog)
+	End If
+
+	If(previousGenerationTime = DateTime.MinValue)Then
+		generationLog.AppendLine("Last Template Execution Time: [never]")
+	Else
+		generationLog.AppendLine(String.Format("Last Template Execution Time: {0} - {1}",previousGenerationTime.ToShortDateString(), previousGenerationTime.ToLongTimeString()))
+	End If
+
+	generationLog.AppendLine(String.Format("Last Script update Time:      {0} - {1}",inputScriptVersionDate.ToShortDateString(), inputScriptVersionDate.ToLongTimeString()))
+
+	If(inputScriptVersionDate <= previousGenerationTime)Then
+		generationLog.AppendLine("WE ARE ALREADY UP TO DATE!")
+	Else
+		generationLog.AppendLine("WE ARE NOT UP TO DATE! - WE NEED TO CREATE UPDATE SCRIPTS!")
+
+		'------------------------------------------------------------------------
+		' write the delete all script
+		'------------------------------------------------------------------------
+
+		generationLog.AppendLine("updating " & FileNameDeleteAll & "...")
+		#><#= deleteAllScript.ToString() #><#
+		SaveOutput(FileNameDeleteAll, ESolutionItemType.EmbeddedResource)
+
+		'------------------------------------------------------------------------
+		' change tracking logic
+		'------------------------------------------------------------------------
+
+		If (initial) Then
+
+			'------------------------------------------------------------------------
+			' setup the first full install script
+			'------------------------------------------------------------------------
+
+			generationLog.AppendLine("importing Input Script as new full setup script...")
+
+			fullInstallScript.Append(inputScriptSetupPart.ToString)
+			fullInstallScript.AppendLine()
+			fullInstallScript.AppendLine(splitLine)
+
+			'------------------------------------------------------------------------
+			' setup reference db
+			'------------------------------------------------------------------------
+
+			'generationLog.AppendLine("setting up a new installed ReferenceDb...")
+			'Me.ExecuteSqlScript(inputScriptSetupPart.ToString(), SqlConnectionstring, ReferenceDb)
+
+		Else		
+			'------------------------------------------------------------------------
+			' read the old full install script
+			'------------------------------------------------------------------------
+
+			generationLog.AppendLine("loading existing full setup script...")
+			If(IO.File.Exists(filePathFullInstall))
+				fullInstallScript.Append(IO.File.ReadAllText( filePathFullInstall, System.Text.Encoding.Default))
+				'fullInstallScript.Append(ReadFile( filePathFullInstall))
+			End If
+
+			'------------------------------------------------------------------------
+			' setup new empty databases (used to compare)
+			'------------------------------------------------------------------------
+#>
+USE [master]
+GO
+
+IF (EXISTS (SELECT name FROM master.dbo.sysdatabases WHERE ('[' + name + ']' = N'[%DB%]' OR name = N'[%DB%]')))
+	-- /* close all connections */
+	ALTER DATABASE [%DB%] SET RESTRICTED_USER WITH ROLLBACK IMMEDIATE
+GO
+
+IF (EXISTS (SELECT name FROM master.dbo.sysdatabases WHERE ('[' + name + ']' = N'[%DB%]' OR name = N'[%DB%]')))
+	-- /* delete database */
+	DROP  DATABASE [%DB%]
+GO
+
+CREATE DATABASE [%DB%]
+	CONTAINMENT = NONE
+	ON  PRIMARY ( NAME = N'%DB%'    , FILENAME = N'%WORKFOLDER%%DB%.mdf' , SIZE = 5000KB , MAXSIZE = UNLIMITED, FILEGROWTH = 1024KB )
+	LOG ON      ( NAME = N'%DB%_log', FILENAME = N'%WORKFOLDER%%DB%.ldf' , SIZE = 1024KB , MAXSIZE = 2048GB   , FILEGROWTH = 10%    )
+GO
+
+ALTER DATABASE [%DB%] SET ANSI_NULL_DEFAULT OFF 
+ALTER DATABASE [%DB%] SET ANSI_NULLS OFF 
+ALTER DATABASE [%DB%] SET ANSI_PADDING OFF 
+ALTER DATABASE [%DB%] SET ANSI_WARNINGS OFF 
+ALTER DATABASE [%DB%] SET ARITHABORT OFF 
+ALTER DATABASE [%DB%] SET AUTO_CLOSE OFF 
+ALTER DATABASE [%DB%] SET AUTO_CREATE_STATISTICS ON 
+ALTER DATABASE [%DB%] SET AUTO_SHRINK OFF 
+ALTER DATABASE [%DB%] SET AUTO_UPDATE_STATISTICS ON 
+ALTER DATABASE [%DB%] SET CURSOR_CLOSE_ON_COMMIT OFF 
+ALTER DATABASE [%DB%] SET CURSOR_DEFAULT  GLOBAL 
+ALTER DATABASE [%DB%] SET CONCAT_NULL_YIELDS_NULL OFF 
+ALTER DATABASE [%DB%] SET NUMERIC_ROUNDABORT OFF 
+ALTER DATABASE [%DB%] SET QUOTED_IDENTIFIER OFF 
+ALTER DATABASE [%DB%] SET RECURSIVE_TRIGGERS OFF 
+ALTER DATABASE [%DB%] SET  DISABLE_BROKER 
+ALTER DATABASE [%DB%] SET AUTO_UPDATE_STATISTICS_ASYNC OFF 
+ALTER DATABASE [%DB%] SET DATE_CORRELATION_OPTIMIZATION OFF 
+ALTER DATABASE [%DB%] SET TRUSTWORTHY OFF 
+ALTER DATABASE [%DB%] SET ALLOW_SNAPSHOT_ISOLATION OFF 
+ALTER DATABASE [%DB%] SET PARAMETERIZATION SIMPLE 
+ALTER DATABASE [%DB%] SET READ_COMMITTED_SNAPSHOT OFF 
+ALTER DATABASE [%DB%] SET HONOR_BROKER_PRIORITY OFF 
+ALTER DATABASE [%DB%] SET RECOVERY SIMPLE 
+ALTER DATABASE [%DB%] SET MULTI_USER 
+ALTER DATABASE [%DB%] SET PAGE_VERIFY CHECKSUM  
+ALTER DATABASE [%DB%] SET DB_CHAINING OFF 
+ALTER DATABASE [%DB%] SET FILESTREAM( NON_TRANSACTED_ACCESS = OFF ) 
+ALTER DATABASE [%DB%] SET TARGET_RECOVERY_TIME = 0 SECONDS 
+ALTER DATABASE [%DB%] SET  READ_WRITE 
+GO
+
+<#
+			SaveOutput(filePathSqlPrepare, ESolutionItemType.None)
+
+			generationLog.AppendLine("create or clean databases...")
+			Dim prepareScript as String
+
+			'prepareScript = io.file.readalltext(filePathSqlPrepare, System.Text.Encoding.Default)
+			prepareScript = ReadFile(filePathSqlPrepare)
+			prepareScript = prepareScript.Replace("%WORKFOLDER%",workingFolder)
+			prepareScript = prepareScript.Replace("%DB%", MasterDb)
+			Me.ExecuteSqlScript(prepareScript, SqlConnectionstring, "Master", SqlServerName)
+
+			'prepareScript = io.file.readalltext(filePathSqlPrepare, System.Text.Encoding.Default)
+			prepareScript = ReadFile(filePathSqlPrepare)
+			prepareScript = prepareScript.Replace("%WORKFOLDER%",workingFolder)
+			prepareScript = prepareScript.Replace("%DB%", ReferenceDb)
+			Me.ExecuteSqlScript(prepareScript, SqlConnectionstring, "Master", SqlServerName)
+
+			'------------------------------------------------------------------------
+			' install the MasterDb
+			'------------------------------------------------------------------------
+
+			generationLog.AppendLine("reinstalling MasterDb using the input script...")
+			Me.ExecuteSqlScript(inputScriptSetupPart.ToString(), SqlConnectionstring, MasterDb, SqlServerName)
+
+			'------------------------------------------------------------------------
+			' setup reference db
+			'------------------------------------------------------------------------
+
+			generationLog.AppendLine("setting up a new installed ReferenceDb using the old full setup script...")
+			Me.ExecuteSqlScript(fullInstallScript.ToString(), SqlConnectionstring, ReferenceDb, SqlServerName)
+
+			'------------------------------------------------------------------------
+			' execute the db compare tool
+			'------------------------------------------------------------------------
+
+			generationLog.AppendLine("Comparing MasterDb and ReferenceDb...")
+			Me.ExecuteDbDiffTool(SqlServerName, MasterDb, ReferenceDb, filePathDbCompareTool, filePathDbCompareOutput)
+
+			If(IO.File.Exists(filePathDbCompareOutput))
+
+				Dim updateScriptContent as String
+				updateScriptContent = IO.File.ReadAllText(filePathDbCompareOutput, System.Text.Encoding.Default)
+				'updateScriptContent = ReadFile(filePathDbCompareOutput)
+
+				If (Not String.IsNullOrWhiteSpace (updateScriptContent)) Then
+
+					generationLog.AppendLine("  found differences!")
+
+					'------------------------------------------------------------------------
+					' append it as new part of the full install script
+					'------------------------------------------------------------------------
+
+					generationLog.AppendLine("apending update script to full setup script...")
+
+					fullInstallScript.Append(CommentSyntax)
+					fullInstallScript.Append(" ")
+					fullInstallScript.AppendLine(timeStamp)
+					fullInstallScript.AppendLine()
+
+					fullInstallScript.Append(updateScriptContent)
+
+					If(updateScriptContent.Contains("CREATE TABLE"))Then
+						fullInstallScript.AppendLine()
+						fullInstallScript.AppendLine("-- a table was createted, so we need to fix bad named default constraints...")
+						fullInstallScript.AppendLine()
+						fullInstallScript.Append(Me.GetConstraintFixingScript())
+					End If
+
+					'------------------------------------------------------------------------
+					' append the split marker
+					'------------------------------------------------------------------------
+
+					fullInstallScript.AppendLine()
+					fullInstallScript.AppendLine(splitLine)
+
+				End If
+			Else
+				generationLog.AppendLine("  no difference found!")
+			End If
+
+		End If
+
+		'------------------------------------------------------------------------
+		' write the new full install script
+		'------------------------------------------------------------------------
+
+		generationLog.AppendLine("writing the new full setup script...")
+		#><#= fullInstallScript.ToString() #><#
+		SaveOutput(FileNameFullInstall, ESolutionItemType.None)
+
+		'------------------------------------------------------------------------
+		' split the fullinstallscript to single update scripts and attach them
+		'------------------------------------------------------------------------
+
+		Dim reader As New IO.StringReader(fullInstallScript.ToString())
+		Dim currentLine As String
+		Dim index As Integer = StartIndex
+		Dim currentFileName As String
+		Dim firstFile As Boolean = True
+		Dim firstLine As Boolean = True
+
+		generationLog.AppendLine("splitting the full setup script into update scripts...")
+
+		currentLine = reader.ReadLine
+		Do While (currentLine IsNot Nothing)
+
+			If(currentLine = splitLine)Then
+
+				If(firstFile)Then
+					currentFileName = String.Format(FirstFileNamePattern, index)
+					firstFile = False
+				Else
+					currentFileName = String.Format(FileNamePattern, index)
+				End If
+
+				SaveOutput(currentFileName, ESolutionItemType.EmbeddedResource)
+				firstLine = True 
+
+				index = index + 1
+			Else
+				If(firstLine)Then
+					firstLine = False
+				Else
+					#><#= Environment.NewLine #><#
+				End If
+				#><#= currentLine #><#
+			End If
+
+			currentLine = reader.ReadLine
+		Loop
+
+	End If
+
+	Catch ex as Exception
+		generationLog.AppendLine("")
+		generationLog.AppendLine("T4 execution termiated!")
+
+		Do While (ex IsNot Nothing)
+			generationLog.AppendLine("CAUSED BY EXCEPTION:")
+			generationLog.AppendLine(ex.Message)
+			generationLog.AppendLine(ex.StackTrace.Replace("GeneratedTextTransformation.","GeneratedTextTransformation." & Environment.NewLine))
+			ex = ex.InnerException
+		Loop
+
+		Throw
+
+	Finally
+
+		'------------------------------------------------------------------------
+		' write the generation log
+		'------------------------------------------------------------------------
+
+		generationLog.AppendLine("writing log output...")
+		#><#= generationLog.ToString() #><#
+
+	End Try
+
+#>
+<#+
+
+ Private Function ReadFile(fileName As String) As String
+	Dim content As String
+	Using fileStreamReader As New IO.StreamReader(fileName, True)
+      content = fileStreamReader.ReadToEnd()
+      fileStreamReader.Close()
+	End Using
+	Return content
+ End Function
+
+ Private Sub ExecuteDbDiffTool(sqlServerName As String, sourceDb As String, targetDb As String, dbCompareToolExecutable As String, outputFileName As String)
+
+    Dim dbCompareToolParameters As String = String.Format("/ssn:{0} /sdn:{1} /tsn:{2} /tdn:{3} /ssp:""{4}""", sqlServerName, sourceDb, sqlServerName, targetDb, outputFileName)
+
+    Using proc = Process.Start(dbCompareToolExecutable, dbCompareToolParameters)
+      proc.WaitForExit()
+      System.Threading.Thread.Sleep(100)
+    End Using
+
+  End Sub
+
+  Private Sub ExecuteSqlScript(sqlScript As String, sqlConnectionstring As String, targetDb As String, targetServer As String)
+
+    Dim dbConnection As SqlConnection
+    Dim cmnd As SqlCommand
+    Dim currentCommand As New System.Text.StringBuilder
+
+    Try
+
+      dbConnection = New SqlConnection(sqlConnectionstring.Replace("%DB%", targetDb).Replace("%SERVER%", targetServer))
+      dbConnection.Open()
+
+      Try
+
+        Dim reader As New IO.StringReader(sqlScript)
+        Dim currentLine As String
+
+        currentLine = reader.ReadLine
+
+        Do While (currentLine IsNot Nothing)
+
+          If (currentLine.Trim().ToLower() = "go") Then
+            cmnd = New SqlCommand(currentCommand.ToString(), dbConnection)
+            cmnd.ExecuteNonQuery()
+            currentCommand.Clear()
+          Else
+            currentCommand.AppendLine(currentLine)
+          End If
+
+          currentLine = reader.ReadLine
+        Loop
+
+        If (currentCommand.Length > 0) Then
+          cmnd = New SqlCommand(currentCommand.ToString(), dbConnection)
+          cmnd.ExecuteNonQuery()
+        End If
+
+      Finally
+        dbConnection.Close()
+      End Try
+
+    Catch ex As Exception
+		Dim innerMessage As String =""
+		If(ex.InnerException IsNot Nothing)Then
+			innerMessage = ex.InnerException.Message
+		End If
+		Throw New Exception("Error Execution Sql Command! " & ex.Message & innerMessage & Environment.NewLine & Environment.NewLine & "Command:" & Environment.NewLine & currentCommand.ToString() , ex)
+    End Try
+
+  End Sub
+
+  Private Function ReadPreviousGenerationTime(logFile As String) As DateTime
+
+    Dim result As DateTime = DateTime.MinValue
+    Const timeLinePattern As String = "This Template Execution Time: "
+
+    If (IO.File.Exists(logFile)) Then
+      Using sr As New IO.StreamReader(logFile)
+
+        Dim currentLine As String = sr.ReadLine
+
+        If (currentLine IsNot Nothing AndAlso currentLine.StartsWith(timeLinePattern)) Then
+          currentLine = currentLine.Substring(timeLinePattern.Length, currentLine.Length - timeLinePattern.Length)
+          result = DateTime.ParseExact(currentLine, "dd.MM.yyyy - HH:mm:ss", System.Globalization.CultureInfo.CurrentCulture)
+        End If
+
+        sr.Close()
+      End Using
+    End If
+
+    Return result
+  End Function
+
+  Private Function SplitInputScript(filePathInputScript As String, filePathAdditionalScript As String, inputScriptSplitLine As String, inputScriptBeginLine As String, inputScriptSetupPart As System.Text.StringBuilder, deleteAllScript As System.Text.StringBuilder) As DateTime
+
+    'Dim reader As New IO.StringReader(IO.File.ReadAllText(filePathInputScript))
+	Dim reader As New IO.StringReader(ReadFile(filePathInputScript))
+    Dim currentLine As String
+    Dim part As Integer = 0
+    Dim scriptVersionDate As DateTime = DateTime.Now
+
+    Const timestampLine As String = "-- Date Created: "
+
+    currentLine = reader.ReadLine
+    Do While (currentLine IsNot Nothing)
+
+      Select Case part
+        Case 0
+          If (currentLine = inputScriptBeginLine) Then
+            part = 1
+          ElseIf (currentLine.StartsWith(timestampLine)) Then
+            scriptVersionDate = DateTime.ParseExact(currentLine.Substring(timestampLine.Length, currentLine.Length - timestampLine.Length), "MM\/dd\/yyyy HH:mm:ss", System.Globalization.CultureInfo.CurrentCulture)
+          End If
+        Case 1
+          If (currentLine = inputScriptSplitLine) Then
+            part = 2
+          Else
+            deleteAllScript.AppendLine(currentLine)
+          End If
+        Case 2
+          inputScriptSetupPart.AppendLine(currentLine)
+      End Select
+
+      currentLine = reader.ReadLine
+    Loop
+
+	'-------------------------
+
+	If (IO.File.Exists(filePathAdditionalScript))Then
+
+		'read and append the 'AdditionalScript'
+
+		'reader = New IO.StringReader(IO.File.ReadAllText(filePathAdditionalScript))
+		reader = New IO.StringReader(ReadFile(filePathAdditionalScript))
+		currentLine = reader.ReadLine
+		Do While (currentLine IsNot Nothing)
+			inputScriptSetupPart.AppendLine(currentLine)
+			currentLine = reader.ReadLine
+		Loop
+
+	End If
+
+    Return scriptVersionDate
+  End Function
+
+  Private Function GetConstraintFixingScript() As String
+
+      Return _
+<![CDATA[
+
+DECLARE @str varchar(max)
+
+DECLARE constraintCursor CURSOR FOR
+	SELECT
+		'sp_rename N''' + sch.[NAME] + '.' + con.[NAME] + ''', N''DF__' + tab.name + '__' + REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(col.name,'Ä','AE'),'Ö','OE'),'Ü','UE'),'ä','ae'),'ö','oe'),'ü','ue') + ''', N''OBJECT'''
+	FROM
+		sys.objects con,
+		sys.objects tab,
+		sys.schemas sch,
+		sys.columns col
+	WHERE
+		con.type IN ('C', 'F', 'PK', 'UQ', 'D')
+		AND con.parent_object_id=tab.object_id
+		AND tab.type='U'
+		AND tab.SCHEMA_ID = sch.schema_id
+		AND con.type_desc = 'DEFAULT_CONSTRAINT'
+		AND col.default_object_id = con.object_id
+		AND con.[NAME] != 'DF__' + tab.name + '__' + REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(col.name,'Ä','AE'),'Ö','OE'),'Ü','UE'),'ä','ae'),'ö','oe'),'ü','ue')
+	ORDER BY
+        con.type,
+		tab.name
+		 
+
+OPEN constraintCursor
+	FETCH NEXT FROM constraintCursor INTO @str
+	WHILE (@@fetch_status = 0) BEGIN
+		PRINT @str
+		EXEC (@str)
+		FETCH NEXT FROM constraintCursor INTO @str
+	END
+CLOSE constraintCursor
+
+DEALLOCATE constraintCursor
+
+GO
+]]>.Value
+
+  End Function
+
+  '+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+  Dim _SavedOutputs As List(Of String) = New List(Of String)
+  Dim _Engine As Engine = New Engine()
+
+  Sub DeleteOldOutputs()
+
+    Dim templateProjectItem As EnvDTE.ProjectItem = GetTemplateProjectItem()
+
+    For Each childProjectItem As EnvDTE.ProjectItem In templateProjectItem.ProjectItems
+      If (Not _SavedOutputs.Contains(childProjectItem.Name)) Then
+        Threading.Thread.Sleep(100)
+        childProjectItem.Delete()
+      End If
+    Next
+
+  End Sub
+
+  Sub ProcessTemplate(templateFileName As String, outputFileName As String)
+
+    Dim templateDirectory As String = Path.GetDirectoryName(Host.TemplateFile)
+    Dim outputFilePath As String = Path.Combine(templateDirectory, outputFileName)
+
+    Dim template As String = File.ReadAllText(Host.ResolvePath(templateFileName))
+    Dim output As String = _Engine.ProcessTemplate(template, Host)
+    File.WriteAllText(outputFilePath, output)
+
+    Dim templateProjectItem As EnvDTE.ProjectItem = GetTemplateProjectItem()
+    templateProjectItem.ProjectItems.AddFromFile(outputFilePath)
+
+    _SavedOutputs.Add(outputFileName)
+  End Sub
+
+  Private Enum ESolutionItemType As Integer
+    None = 0
+    Compile = 1
+    EmbeddedResource = 3
+  End Enum
+
+  Private Sub SaveOutput(outputFileName As String, Optional solutionItemType As ESolutionItemType = ESolutionItemType.Compile, Optional encoding As System.Text.Encoding = nothing)
+
+    Dim templateDirectory As String = Path.GetDirectoryName(Host.TemplateFile)
+    Dim outputFilePath As String = Path.Combine(templateDirectory, outputFileName)
+
+    Dim templateProjectItem As EnvDTE.ProjectItem = GetTemplateProjectItem()
+
+    'checkout file from source control
+    If (templateProjectItem.DTE.SourceControl IsNot Nothing) Then
+
+      templateProjectItem.DTE.SourceControl.CheckOutItem(outputFilePath)
+
+      For Each existingFileItem As EnvDTE.ProjectItem In templateProjectItem.ProjectItems
+        If (existingFileItem.Name = IO.Path.GetFileName(outputFilePath)) Then
+
+          'we need to do this fist beacause there could be a old version which is under sourcecontrol and write-protected 
+          existingFileItem.Remove()
+
+          Threading.Thread.Sleep(100)
+        End If
+      Next
+
+    End If
+
+    'remove write protection and delete file (if already exists)
+    Dim outputFileInfo As New System.IO.FileInfo(outputFilePath)
+    If (outputFileInfo.Exists) Then
+
+      outputFileInfo.Attributes = IO.FileAttributes.Normal
+      Threading.Thread.Sleep(100)
+
+      File.Delete(outputFilePath)
+      Threading.Thread.Sleep(100)
+
+    End If
+
+	If(encoding is Nothing)Then
+		File.WriteAllText(outputFilePath, Me.GenerationEnvironment.ToString(), System.Text.Encoding.Default)
+	Else
+		File.WriteAllText(outputFilePath, Me.GenerationEnvironment.ToString(), encoding)
+	End If
+
+    Me.GenerationEnvironment = New StringBuilder()
+
+    Dim addedFile As EnvDTE.ProjectItem = templateProjectItem.ProjectItems.AddFromFile(outputFilePath)
+
+    'Extension=.sql
+    'FileName=HNS.2.sql 
+    'CustomToolOutput=
+    'DateModified=14.10.2013 15:44:13
+    'IsLink=False
+    'BuildAction=2  '(0=None;1=Compile;2=Content;3=EmbeddedResource;4=CodeAnalysis;5=AppDefinition;6=Page;7=Resource;8=SplashScreen;9=DesignData)
+    'SubType=
+    'CopyToOutputDirectory=0
+    'IsSharedDesignTimeBuildInput=False
+    'ItemType=Content 
+    'IsCustomToolOutput=False 
+    'HTMLTitle=
+    'CustomTool=
+    'Filesize=559 
+    'CustomToolNamespace=
+    'Author=
+    'FullPath=C:\...\HNS.2.sql
+    'IsDependentFile=True 
+    'IsDesignTimeBuildInput=False 
+    'DateCreated=14.10.2013 15:35:41
+    'LocalPath=C:\...\HNS.2.sql
+    'ModifiedBy=
+
+    For Each propertyOfAddedFile As EnvDTE.Property In addedFile.Properties
+      Select Case propertyOfAddedFile.Name
+        Case "BuildAction" : propertyOfAddedFile.Value = DirectCast(solutionItemType, Integer)
+      End Select
+    Next
+
+    _SavedOutputs.Add(outputFileName)
+  End Sub
+
+  Private Function GetTemplateProjectItem() As EnvDTE.ProjectItem
+
+    Dim dteProject As EnvDTE.Project = __getTemplateProject()
+    Dim vsProject As IVsProject = DteProjectToVsProject(dteProject)
+
+    Dim iFound As Integer = 0
+    Dim itemId As UInteger = 0
+
+    Dim pdwPriority As VSDOCUMENTPRIORITY() = New VSDOCUMENTPRIORITY(1) {}
+
+    Dim result As Integer = vsProject.IsDocumentInProject(Host.TemplateFile, iFound, pdwPriority, itemId)
+    If (Not result = VSConstants.S_OK) Then
+      Throw New Exception("Unexpected error calling IVsProject.IsDocumentInProject")
+    End If
+    If (iFound = 0) Then
+      Throw New Exception("Cannot retrieve ProjectItem for template file")
+    End If
+    If (itemId = 0) Then
+      Throw New Exception("Cannot retrieve ProjectItem for template file")
+    End If
+
+    Dim itemContext As Microsoft.VisualStudio.OLE.Interop.IServiceProvider = Nothing
+    result = vsProject.GetItemContext(itemId, itemContext)
+    If (Not result = VSConstants.S_OK) Then
+      Throw New Exception("Unexpected error calling IVsProject.GetItemContext")
+    End If
+    If (itemContext Is Nothing) Then
+      Throw New Exception("IVsProject.GetItemContext returned null")
+    End If
+
+    Dim itemContextService As ServiceProvider = New ServiceProvider(itemContext)
+    Dim templateItem As EnvDTE.ProjectItem = DirectCast(itemContextService.GetService(GetType(EnvDTE.ProjectItem)), EnvDTE.ProjectItem)
+    Debug.Assert(templateItem IsNot Nothing, "itemContextService.GetService returned null")
+
+    Return templateItem
+  End Function
+
+  Private Function __getTemplateProject() As EnvDTE.Project
+
+    Dim hostServiceProvider As IServiceProvider = DirectCast(Host, IServiceProvider)
+    If (hostServiceProvider Is Nothing) Then
+      Throw New Exception("Host property returned unexpected value (null)")
+    End If
+
+    Dim dte As EnvDTE.DTE = DirectCast(hostServiceProvider.GetService(GetType(EnvDTE.DTE)), EnvDTE.DTE)
+    If (dte Is Nothing) Then
+      Throw New Exception("Unable to retrieve EnvDTE.DTE")
+    End If
+
+    Dim activeSolutionProjects As Array = DirectCast(dte.ActiveSolutionProjects, Array)
+    If (activeSolutionProjects Is Nothing) Then
+      Throw New Exception("DTE.ActiveSolutionProjects returned null")
+    End If
+
+    Dim dteProject As EnvDTE.Project = DirectCast(activeSolutionProjects.GetValue(0), EnvDTE.Project)
+    If (dteProject Is Nothing) Then
+      Throw New Exception("DTE.ActiveSolutionProjects[0] returned null")
+    End If
+
+    Return dteProject
+  End Function
+
+  Private Shared Function DteProjectToVsProject(project As EnvDTE.Project) As IVsProject
+
+    If (project Is Nothing) Then
+      Throw New ArgumentNullException("project")
+    End If
+
+    Dim projectGuid As String = Nothing
+
+    ' DTE does not expose the project GUID that exists at in the msbuild project file.        
+    ' Cannot use MSBuild object model because it uses a static instance of the Engine,         
+    ' and using the Project will cause it to be unloaded from the engine when the         
+    ' GC collects the variable that we declare.       
+    Using projectReader = XmlReader.Create(project.FileName)
+      projectReader.MoveToContent()
+      Dim nodeName As Object = projectReader.NameTable.Add("ProjectGuid")
+      Do While (projectReader.Read())
+        If (Object.Equals(projectReader.LocalName, nodeName)) Then
+          projectGuid = DirectCast(projectReader.ReadElementContentAsString(), String)
+          Exit Do
+        End If
+      Loop
+    End Using
+
+    If (String.IsNullOrEmpty(projectGuid)) Then
+      Throw New Exception("Unable to find ProjectGuid element in the project file")
+    End If
+
+    Dim dteServiceProvider As Microsoft.VisualStudio.OLE.Interop.IServiceProvider =
+      DirectCast(project.DTE, Microsoft.VisualStudio.OLE.Interop.IServiceProvider)
+
+    Dim serviceProvider As IServiceProvider = New ServiceProvider(dteServiceProvider)
+    Dim vsHierarchy As IVsHierarchy = VsShellUtilities.GetHierarchy(serviceProvider, New Guid(projectGuid))
+
+    Dim vsProject As IVsProject = DirectCast(vsHierarchy, IVsProject)
+    If (vsProject Is Nothing) Then
+      Throw New ArgumentException("Project is not a VS project.")
+    End If
+
+    Return vsProject
+  End Function
+  
+  #>

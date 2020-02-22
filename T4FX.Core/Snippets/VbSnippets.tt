@@ -1,0 +1,183 @@
+﻿<#@ template language="VB" debug="false" hostspecific="true"#>
+<#@ assembly name="System.Core" #>
+<#@ output extension=".Generated.vb"#><#
+
+Dim directoryInfo As  System.IO.DirectoryInfo
+Dim snippetFiles() As System.IO.FileInfo 
+Dim assemblyRootNamespace As String = String.Empty
+Dim snippetFolderName As String = String.Empty
+Dim className As String = IO.Path.GetFileNameWithoutExtension(Host.TemplateFile)
+Dim placeholderPattern As String
+Dim placeholderCutLeft As Integer
+Dim placeholderCutRight As Integer
+
+'##########################################################
+'# INFO:                                                  #
+'#   template by Tobias Korn                              #
+'#                                                        #
+'#   version    = 2.0                                     #
+'#   date       = 2014-01-20                              #
+'#                                                        #
+'##########################################################
+'# CONFIGURATION:                                         #
+'#                                                        #
+
+     assemblyRootNamespace = "DevTools.T4GenLib"
+     snippetFolderName     = ".\VB"
+
+	 placeholderPattern    = "__([A-Za-z0-9])*__"
+	 placeholderCutLeft    = 2
+	 placeholderCutRight   = 2
+
+'#                                                        #
+'##########################################################
+
+If ((Not assemblyRootNamespace = String.Empty) AndAlso (Not assemblyRootNamespace.EndsWith("."))) Then
+  assemblyRootNamespace = assemblyRootNamespace & "."
+End If
+
+directoryInfo = New System.IO.DirectoryInfo(System.IO.Path.GetDirectoryName(Host.TemplateFile) & "\" & snippetFolderName)
+
+If(directoryInfo.Exists()) Then
+    snippetFiles = directoryInfo.GetFiles()
+Else
+    snippetFiles = {}
+    Throw New Exception(environment.newline() & "#####-T4-EXCEPTION-#####" & environment.newline() & environment.newline() & 			string.Format("Folder '{0}' does not exist.", directoryInfo.FullName) & 	 environment.newline() & environment.newline() &                    "########################")
+End If
+
+ '##############################################################################################################################
+#>
+Imports System
+Imports System.IO
+Imports System.Text
+Imports System.Reflection
+
+#Region " MY Extension "
+
+Namespace My
+
+  <Microsoft.VisualBasic.HideModuleName>
+  Friend Module My<#= className #>
+
+    Private _Instance<#= className #> As <#= className #> = Nothing
+    Friend ReadOnly Property <#= className #> As <#= className #>
+      Get
+        If (_Instance<#= className #> Is Nothing) Then
+          _Instance<#= className #> = New <#= className #>
+        End If
+        Return _Instance<#= className #>
+      End Get
+    End Property
+
+  End Module
+
+End Namespace
+
+#End Region
+
+Partial Public NotInheritable Class <#= className #>
+#Region "..."
+
+  Private Function LoadEmbeddedFile(fileName As String) As StringBuilder
+    Dim content As New StringBuilder
+    Dim streamReader As StreamReader
+
+    streamReader = New StreamReader(Assembly.GetExecutingAssembly().GetManifestResourceStream("<#= assemblyRootNamespace #>" & fileName))
+
+    While Not streamReader.EndOfStream
+      content.AppendLine(streamReader.ReadLine())
+    End While
+
+    Return content
+  End Function
+
+#End Region
+
+  'generated functions for each embedded snippet file:
+<#
+For Each snippetFile As System.IO.FileInfo In snippetFiles
+If (Not System.IO.Path.GetFileNameWithoutExtension(snippetFile.Name).Contains(" ")) Then
+
+    Dim placeHolders As System.Collections.Generic.List(Of String) = LoadPlaceHolders(snippetFile.FullName, placeholderPattern, placeholderCutLeft, placeholderCutRight)
+ 
+    Dim placeHolderParamString As New System.Text.StringBuilder
+    For i As Integer = 0 To (placeHolders.Count - 1)
+        If (i > 0) Then
+            placeHolderParamString.Append (", ")
+        End if
+        placeHolderParamString.Append (FirstToLower(CleanPlaceHolderName(placeHolders(i), placeholderCutLeft, placeholderCutRight)))
+        placeHolderParamString.Append (" As String")
+    Next
+
+#>
+
+#Region " <#= snippetFile.Name #> "
+
+    Public Function [<#= System.IO.Path.GetFileNameWithoutExtension(snippetFile.Name).Replace(".","_") #>](<#= placeHolderParamString.ToString() #>) as String
+        Dim content As StringBuilder
+        content = Me.LoadEmbeddedFile("<#= snippetFile.Name #>")
+<#
+For i As Integer = 0 To (placeHolders.Count - 1)
+    If (i < 1) Then
+#>
+
+<#
+    End if
+#>
+        content.Replace("<#= placeHolders(i) #>", <#= FirstToLower(CleanPlaceHolderName(placeHolders(i), placeholderCutLeft, placeholderCutRight)) #>)
+<#
+Next
+#>
+
+        Return content.ToString()
+    End Function
+<#
+Else
+#>
+
+    'Note: there was no code generated for Snippet file '<#= System.IO.Path.GetFileNameWithoutExtension(snippetFile.Name) #>' because the
+    '      filename contains blank characters and cannot be loaded as embedded resouce!
+<#
+End if
+#>
+
+#End Region
+<#
+Next
+#>
+
+End Class
+<#+ '###########################################################################################################################
+
+	Function CleanPlaceHolderName(placeHolderString As String, placeholderCutLeft As Integer, placeholderCutRight As Integer) As String
+		Return placeHolderString.Substring(placeholderCutLeft, placeHolderString.Length - (placeholderCutLeft + placeholderCutRight))
+	End Function
+
+    Function LoadPlaceHolders(fileName As string, placeholderPattern As String, placeholderCutLeft As Integer, placeholderCutRight As Integer) As System.Collections.Generic.List(Of String)
+        Dim placeHolderStrings As New System.Collections.Generic.List(Of String)
+        Dim placeHolderString As String 
+        Dim snippetText As String =	System.IO.File.ReadAllText(fileName, System.text.encoding.Default)
+
+        Dim placeHolders As System.Text.RegularExpressions.MatchCollection
+        placeHolders = System.Text.RegularExpressions.Regex.Matches(snippetText, placeholderPattern)
+
+        For Each placeHolder As System.Text.RegularExpressions.Match In placeHolders
+            placeHolderString = placeHolder.ToString()
+			'placeHolderString = placeHolderString.Substring(placeholderCutLeft, placeHolderString.Length - (placeholderCutLeft + placeholderCutRight))
+            If(Not placeHolderStrings.Contains(placeHolderString))Then
+              placeHolderStrings.Add(placeHolderString)
+            End If
+        Next
+
+        Return placeHolderStrings
+    End Function
+
+    Private Function FirstToLower(input As String) As String
+      If (input.Length > 1) Then
+        Return input.Substring(0, 1).ToLower() & input.Substring(1, input.Length - 1)
+      Else
+        Return input.ToLower()
+      End If
+    End Function
+
+#>

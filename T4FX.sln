@@ -1,0 +1,71 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 14
+VisualStudioVersion = 14.0.25420.1
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "T4FX.UnitTests", "T4FX.UnitTests\T4FX.UnitTests.vbproj", "{DDC99418-CC21-4955-ADDF-3EAC436984F4}"
+	ProjectSection(ProjectDependencies) = postProject
+		{9EAE959C-F3D3-445A-9475-C32F931DD106} = {9EAE959C-F3D3-445A-9475-C32F931DD106}
+		{A7733DC2-03EA-4E43-93E4-30813665D120} = {A7733DC2-03EA-4E43-93E4-30813665D120}
+		{AC18DAC5-DC2D-437F-8069-325762AED62F} = {AC18DAC5-DC2D-437F-8069-325762AED62F}
+	EndProjectSection
+EndProject
+Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "T4FX.DbModelGeneration", "T4FX.DbModelGeneration\T4FX.DbModelGeneration.vbproj", "{A7733DC2-03EA-4E43-93E4-30813665D120}"
+	ProjectSection(ProjectDependencies) = postProject
+		{9EAE959C-F3D3-445A-9475-C32F931DD106} = {9EAE959C-F3D3-445A-9475-C32F931DD106}
+	EndProjectSection
+EndProject
+Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "T4FX.DbModelGeneration.EFSupport", "T4FX.DbModelGeneration.EFSupport\T4FX.DbModelGeneration.EFSupport.vbproj", "{AC18DAC5-DC2D-437F-8069-325762AED62F}"
+	ProjectSection(ProjectDependencies) = postProject
+		{9EAE959C-F3D3-445A-9475-C32F931DD106} = {9EAE959C-F3D3-445A-9475-C32F931DD106}
+		{A7733DC2-03EA-4E43-93E4-30813665D120} = {A7733DC2-03EA-4E43-93E4-30813665D120}
+	EndProjectSection
+EndProject
+Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "T4FX", "T4FX.Core\T4FX.vbproj", "{9EAE959C-F3D3-445A-9475-C32F931DD106}"
+EndProject
+Project("{F184B08F-C81C-45F6-A57F-5ABD9991F28F}") = "T4FX.Demo", "T4FX.Demo\T4FX.Demo.vbproj", "{8817F671-7C99-4F87-AF97-61438C22BDF3}"
+	ProjectSection(ProjectDependencies) = postProject
+		{9EAE959C-F3D3-445A-9475-C32F931DD106} = {9EAE959C-F3D3-445A-9475-C32F931DD106}
+		{A7733DC2-03EA-4E43-93E4-30813665D120} = {A7733DC2-03EA-4E43-93E4-30813665D120}
+		{AC18DAC5-DC2D-437F-8069-325762AED62F} = {AC18DAC5-DC2D-437F-8069-325762AED62F}
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "ClassicTemplates", "ClassicTemplates", "{AF6DC033-C1E0-4A4D-B5A7-76A1289B5221}"
+	ProjectSection(SolutionItems) = preProject
+		ClassicTemplates\Context.tt = ClassicTemplates\Context.tt
+		ClassicTemplates\Entities.tt = ClassicTemplates\Entities.tt
+		ClassicTemplates\Mapping.tt = ClassicTemplates\Mapping.tt
+		ClassicTemplates\Model.tt = ClassicTemplates\Model.tt
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DDC99418-CC21-4955-ADDF-3EAC436984F4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DDC99418-CC21-4955-ADDF-3EAC436984F4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DDC99418-CC21-4955-ADDF-3EAC436984F4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DDC99418-CC21-4955-ADDF-3EAC436984F4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A7733DC2-03EA-4E43-93E4-30813665D120}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A7733DC2-03EA-4E43-93E4-30813665D120}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A7733DC2-03EA-4E43-93E4-30813665D120}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A7733DC2-03EA-4E43-93E4-30813665D120}.Release|Any CPU.Build.0 = Release|Any CPU
+		{AC18DAC5-DC2D-437F-8069-325762AED62F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{AC18DAC5-DC2D-437F-8069-325762AED62F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{AC18DAC5-DC2D-437F-8069-325762AED62F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{AC18DAC5-DC2D-437F-8069-325762AED62F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9EAE959C-F3D3-445A-9475-C32F931DD106}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9EAE959C-F3D3-445A-9475-C32F931DD106}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9EAE959C-F3D3-445A-9475-C32F931DD106}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9EAE959C-F3D3-445A-9475-C32F931DD106}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8817F671-7C99-4F87-AF97-61438C22BDF3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8817F671-7C99-4F87-AF97-61438C22BDF3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8817F671-7C99-4F87-AF97-61438C22BDF3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8817F671-7C99-4F87-AF97-61438C22BDF3}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
